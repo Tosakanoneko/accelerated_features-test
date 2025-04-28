@@ -17,7 +17,7 @@ from modules.xfeat import XFeat as c
 os.environ['CUDA_VISIBLE_DEVICES'] = '' #Force CPU, comment for GPU
 
 xfeat_v1 = XFeat_v1()
-xfeat_ori = XFeat_v1()
+xfeat_ori = c()
 
 #Random input
 x = torch.randn(1,3,480,640)

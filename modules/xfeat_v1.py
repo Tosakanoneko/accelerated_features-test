@@ -8,10 +8,10 @@ import numpy as np
 import os
 import torch
 import torch.nn.functional as F
-
+import time
 import tqdm
 
-from modules.model_v1 import *
+from modules.model_v1_old import *
 from modules.interpolator import InterpolateSparse2d
 #from modules.fast_maxpool import FastMaxPool2d
 
@@ -63,7 +63,7 @@ class XFeat(nn.Module):
     def __init__(self, weights = os.path.abspath(os.path.dirname(__file__)) + '/../weights/dw_pw_160000.pth', top_k = 4096, detection_threshold=0.05):
         super().__init__()
         self.dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.net = XFeatModel().to(self.dev).eval()
+        self.net = XFeatModel().to(self.dev)
         self.top_k = top_k
         self.detection_threshold = detection_threshold
 
@@ -73,6 +73,7 @@ class XFeat(nn.Module):
                 self.net.load_state_dict(torch.load(weights, map_location=self.dev))
             else:
                 self.net.load_state_dict(weights)
+            self.net.eval()
 
         self.interpolator = InterpolateSparse2d('bicubic')
 
@@ -445,6 +446,7 @@ class XFeat(nn.Module):
             top_k = 100_000_000
 
         x, rh1, rw1 = self.preprocess_tensor(x)
+        print("shape:",x.shape)
 
         # t = time.time()
         M1, K1, H1 = self.net(x)
