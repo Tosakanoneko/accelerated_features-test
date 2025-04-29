@@ -9,6 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import time
 
+basic_time = []
+
 class BasicLayer(nn.Module):
 	"""
 	  Basic Convolutional Layer: Conv2d -> BatchNorm -> ReLU
@@ -131,6 +133,7 @@ class XFeatModel(nn.Module):
 				heatmap   ->  torch.Tensor(B,  1, H/8, W/8) reliability map
 
 		"""
+		global basic_time
 		#dont backprop through normalization
 		with torch.no_grad():
 			x = x.mean(dim=1, keepdim = True)
@@ -140,7 +143,10 @@ class XFeatModel(nn.Module):
 		x1 = self.block1(x)
 		x2 = self.block2(x1 + self.skip1(x))
 		x3 = self.block3(x2)
+		t0 = time.perf_counter()
 		x4 = self.block4(x3)
+		t1 = time.perf_counter()
+		basic_time.append((t1 - t0) * 1000)
 		x5 = self.block5(x4)
 
 		#pyramid fusion

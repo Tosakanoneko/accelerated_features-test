@@ -11,7 +11,7 @@ import torch.nn.functional as F
 import time
 import tqdm
 
-from modules.model_v1_old import *
+from modules.model_v1 import *
 from modules.interpolator import InterpolateSparse2d
 #from modules.fast_maxpool import FastMaxPool2d
 

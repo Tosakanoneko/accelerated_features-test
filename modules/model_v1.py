@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import time
+
+ds_time = []
 
 class BasicLayer(nn.Module):
     """
@@ -21,53 +24,54 @@ class BasicLayer(nn.Module):
     def forward(self, x):
         return self.layer(x)
 
-class DepthwiseSeparableFused(nn.Module):
-    """
-    Fused Depthwise Separable Conv for inference:
-      - depthwise_conv (bias=True) -> ReLU
-      - pointwise_conv (bias=True) -> ReLU
-    """
-    def __init__(self, in_channels, out_channels,
-                 kernel_size=3, stride=1, padding=1):
-        super().__init__()
-        self.depthwise_conv = nn.Conv2d(
-            in_channels, in_channels,
-            kernel_size, stride=stride,
-            padding=padding, groups=in_channels,
-            bias=True
-        )
-        self.depthwise_relu = nn.ReLU(inplace=True)
-        self.pointwise_conv = nn.Conv2d(
-            in_channels, out_channels,
-            kernel_size=1, bias=True
-        )
-        self.pointwise_relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        x = self.depthwise_conv(x)
-        x = self.depthwise_relu(x)
-        x = self.pointwise_conv(x)
-        return self.pointwise_relu(x)
 # class DepthwiseSeparableLayer(nn.Module):
 #     """
-#     Depthwise Separable Convolution Layer:
-#     1) depthwise conv (groups=in_channels) + BN + ReLU
-#     2) pointwise   conv (1×1)            + BN + ReLU
+#     Fused Depthwise Separable Conv for inference:
+#       - depthwise_conv (bias=True) -> ReLU
+#       - pointwise_conv (bias=True) -> ReLU
 #     """
-#     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+#     def __init__(self, in_channels, out_channels,
+#                  kernel_size=3, stride=1, padding=1):
 #         super().__init__()
-#         self.ds = nn.Sequential(
-#             nn.Conv2d(in_channels, in_channels, kernel_size,
-#                       stride=stride, padding=padding, groups=in_channels, bias=bias),
-#             nn.BatchNorm2d(in_channels, affine=False),
-#             nn.ReLU(inplace=True),
-#             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=bias),
-#             nn.BatchNorm2d(out_channels, affine=False),
-#             nn.ReLU(inplace=True),
+#         self.depthwise_conv = nn.Conv2d(
+#             in_channels, in_channels,
+#             kernel_size, stride=stride,
+#             padding=padding, groups=in_channels,
+#             bias=True
 #         )
+#         self.depthwise_relu = nn.ReLU(inplace=True)
+#         self.pointwise_conv = nn.Conv2d(
+#             in_channels, out_channels,
+#             kernel_size=1, bias=True
+#         )
+#         self.pointwise_relu = nn.ReLU(inplace=True)
 
 #     def forward(self, x):
-#         return self.ds(x)
+#         x = self.depthwise_conv(x)
+#         x = self.depthwise_relu(x)
+#         x = self.pointwise_conv(x)
+#         return self.pointwise_relu(x)
+
+class DepthwiseSeparableLayer(nn.Module):
+    """
+    Depthwise Separable Convolution Layer:
+    1) depthwise conv (groups=in_channels) + BN + ReLU
+    2) pointwise   conv (1×1)            + BN + ReLU
+    """
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+        super().__init__()
+        self.ds = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, kernel_size,
+                      stride=stride, padding=padding, groups=in_channels, bias=bias),
+            nn.BatchNorm2d(in_channels, affine=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=bias),
+            nn.BatchNorm2d(out_channels, affine=False),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x):
+        return self.ds(x)
 
 class XFeatModel(nn.Module):
     """
@@ -96,21 +100,21 @@ class XFeatModel(nn.Module):
 
         # block3: use fused DS
         self.block3 = nn.Sequential(
-            DepthwiseSeparableFused(24, 64, stride=2),
-            DepthwiseSeparableFused(64, 64, stride=1),
+            DepthwiseSeparableLayer(24, 64, stride=2), #in:1/4;out:1/8
+            DepthwiseSeparableLayer(64, 64, stride=1),
             BasicLayer(64, 64, kernel_size=1, padding=0)
         )
         # block4: all fused DS
         self.block4 = nn.Sequential(
-            DepthwiseSeparableFused(64, 64, stride=2),
-            DepthwiseSeparableFused(64, 64, stride=1),
-            DepthwiseSeparableFused(64, 64, stride=1),
+            DepthwiseSeparableLayer(64, 64, stride=2),#in:1/8;out:1/16
+            DepthwiseSeparableLayer(64, 64, stride=1),
+            DepthwiseSeparableLayer(64, 64, stride=1),
         )
         # block5: first three fused, last is 1x1 conv
         self.block5 = nn.Sequential(
-            DepthwiseSeparableFused(64, 128, stride=2),
-            DepthwiseSeparableFused(128, 128, stride=1),
-            DepthwiseSeparableFused(128, 128, stride=1),
+            DepthwiseSeparableLayer(64, 128, stride=2),#in:1/16;out:1/32
+            DepthwiseSeparableLayer(128, 128, stride=1),
+            DepthwiseSeparableLayer(128, 128, stride=1),
             BasicLayer(128, 64, kernel_size=1, padding=0)
         )
 
@@ -153,13 +157,17 @@ class XFeatModel(nn.Module):
 
     def forward(self, x):
         # normalize
+        global ds_time
         with torch.no_grad():
             x = x.mean(dim=1, keepdim=True)
             x = self.norm(x)
         x1 = self.block1(x)
         x2 = self.block2(x1 + self.skip1(x))
         x3 = self.block3(x2)
+        t0 = time.perf_counter()
         x4 = self.block4(x3)
+        t1 = time.perf_counter()
+        ds_time.append((t1 - t0) * 1000)
         x5 = self.block5(x4)
         # multi-scale
         x4_up = F.interpolate(x4, size=x3.shape[-2:], mode='bilinear')

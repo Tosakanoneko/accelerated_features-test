@@ -18,34 +18,6 @@ class BasicLayer(nn.Module):
     def forward(self, x):
         return self.layer(x)
 
-class DepthwiseSeparableFused(nn.Module):
-    """
-    Fused Depthwise Separable Conv for inference:
-      - depthwise_conv (bias=True) -> ReLU
-      - pointwise_conv (bias=True) -> ReLU
-    """
-    def __init__(self, in_channels, out_channels,
-                 kernel_size=3, stride=1, padding=1):
-        super().__init__()
-        self.depthwise_conv = nn.Conv2d(
-            in_channels, in_channels,
-            kernel_size, stride=stride,
-            padding=padding, groups=in_channels,
-            bias=True
-        )
-        self.depthwise_relu = nn.ReLU(inplace=True)
-        self.pointwise_conv = nn.Conv2d(
-            in_channels, out_channels,
-            kernel_size=1, bias=True
-        )
-        self.pointwise_relu = nn.ReLU(inplace=True)
-
-    def forward(self, x):
-        x = self.depthwise_conv(x)
-        x = self.depthwise_relu(x)
-        x = self.pointwise_conv(x)
-        return self.pointwise_relu(x)
-
 class DepthwiseSeparableLayer(nn.Module):
     """
     Depthwise Separable Convolution Layer:
@@ -69,69 +41,79 @@ class DepthwiseSeparableLayer(nn.Module):
     def forward(self, x):
         x = self.depthwise(x)
         return self.pointwise(x)
-    
-# class DepthwiseSeparableLayer(nn.Module):
-#     """
-#     Depthwise Separable Convolution Layer:
-#     1) depthwise conv (groups=in_channels) + BN + ReLU
-#     2) pointwise   conv (1×1)            + BN + ReLU
-#     """
-#     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
-#         super().__init__()
-#         self.ds = nn.Sequential(
-#             nn.Conv2d(in_channels, in_channels, kernel_size,
-#                       stride=stride, padding=padding, groups=in_channels, bias=bias),
-#             nn.BatchNorm2d(in_channels, affine=False),
-#             nn.ReLU(inplace=True),
-#             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=bias),
-#             nn.BatchNorm2d(out_channels, affine=False),
-#             nn.ReLU(inplace=True),
-#         )
 
-#     def forward(self, x):
-#         return self.ds(x)
+class block4_ori(nn.Module):
+    """
+       Implementation of architecture described in 
+       "XFeat: Accelerated Features for Lightweight Image Matching, CVPR 2024."
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.block = nn.Sequential(
+            BasicLayer(in_channels, out_channels, stride=2),
+			BasicLayer(in_channels, out_channels, stride=1),
+			BasicLayer(in_channels, out_channels, stride=1),
+        )
+    def forward(self, x):
+        return self.block(x)
+    
+class block4_ds(nn.Module):
+    """
+       Implementation of architecture described in 
+       "XFeat: Accelerated Features for Lightweight Image Matching, CVPR 2024."
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.block = nn.Sequential(
+            DepthwiseSeparableLayer(in_channels, out_channels, stride=2),
+			DepthwiseSeparableLayer(in_channels, out_channels, stride=1),
+			DepthwiseSeparableLayer(in_channels, out_channels, stride=1),
+        )
+    def forward(self, x):
+        return self.block(x)
 
 def measure_time(module, runs=100):
     """测量 module 在 input_tensor 上的平均前向推理时间 (ms)。"""
-    # device = input_tensor.device
-    device = torch.device('cuda')
     # 如果使用 GPU，需要在计时前后同步
     if device.type == 'cuda':
         torch.cuda.synchronize()
     start = time.perf_counter()
     with torch.no_grad():
         for _ in range(runs):
-            x = torch.randn(1, 128, 960, 1280, device=device)
+            x = torch.randn(1, in_channels, H, W, device=device)
             _ = module(x)
     if device.type == 'cuda':
         torch.cuda.synchronize()
     end = time.perf_counter()
     return (end - start) / runs * 1000.0
 
-def main():
-    # 测试参数
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    batch_size  = 1
-    in_channels = 128
-    out_channels= 128
-    H = 640
-    W = 480
+# 测试参数
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+batch_size  = 1
+in_channels = 256
+out_channels= 256
+H = 640 // 8
+W = 480 // 8
 
-    # 随机输入
+if __name__ == '__main__':
+   
+    # basic = BasicLayer(in_channels, out_channels).to(device).eval()
+    # ds    = DepthwiseSeparableLayer(in_channels, out_channels).to(device).eval()
 
+    basic = block4_ori().to(device).eval()
+    ds    = block4_ds().to(device).eval()
 
-    # 实例化并切换到评估模式
-    basic = BasicLayer(in_channels, out_channels).to(device).eval()
-    ds    = DepthwiseSeparableFused(in_channels, out_channels).to(device).eval()
-
-    # # 预热
-    # with torch.no_grad():
-    #     for _ in range(10):
-    #         _ = basic(x)
-    #         _ = ds(x)
+    # 预热
+    with torch.no_grad():
+        for _ in range(10):
+            x = torch.randn(in_channels, in_channels, H, W, device=device)
+            _ = basic(x)
+            _ = ds(x)
 
     # 测时
-    runs = 100
+    runs = 1000
     t_basic = measure_time(basic, runs)
     t_ds    = measure_time(ds,    runs)
 
@@ -140,5 +122,3 @@ def main():
     print(f"  BasicLayer:                {t_basic:7.3f} ms")
     print(f"  DepthwiseSeparableLayer:   {t_ds:7.3f} ms")
 
-if __name__ == '__main__':
-    main()
