@@ -1,124 +1,67 @@
+"""
+	"XFeat: Accelerated Features for Lightweight Image Matching, CVPR 2024."
+	https://www.verlab.dcc.ufmg.br/descriptors/xfeat_cvpr24/
+
+    Minimal example of how to use XFeat.
+"""
+
+import numpy as np
+import os
 import torch
-import torch.nn as nn
+import tqdm
 import time
 
-class BasicLayer(nn.Module):
-    """
-    Basic Convolutional Layer: Conv2d -> BatchNorm -> ReLU
-    """
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, dilation=1, bias=False):
-        super().__init__()
-        self.layer = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size,
-                      padding=padding, stride=stride, dilation=dilation, bias=bias),
-            nn.BatchNorm2d(out_channels, affine=False),
-            nn.ReLU(inplace=True),
-        )
+from modules.xfeat_v1 import XFeat as XFeat_v1
+from modules.xfeat import XFeat as c
 
-    def forward(self, x):
-        return self.layer(x)
+# os.environ['CUDA_VISIBLE_DEVICES'] = '' #Force CPU, comment for GPU
 
-class DepthwiseSeparableLayer(nn.Module):
-    """
-    Depthwise Separable Convolution Layer:
-    1) depthwise conv (groups=in_channels) + BN + ReLU
-    2) pointwise   conv (1×1)            + BN + ReLU
-    """
-    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
-        super().__init__()
-        self.depthwise = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels, kernel_size,
-                      stride=stride, padding=padding, groups=in_channels, bias=bias),
-            nn.BatchNorm2d(in_channels, affine=False),
-            nn.ReLU(inplace=True),
-        )
-        self.pointwise = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=bias),
-            nn.BatchNorm2d(out_channels, affine=False),
-            nn.ReLU(inplace=True),
-        )
+xfeat_v1 = XFeat_v1()
+xfeat_ori = c()
 
-    def forward(self, x):
-        x = self.depthwise(x)
-        return self.pointwise(x)
+gap = 0
 
-class block4_ori(nn.Module):
-    """
-       Implementation of architecture described in 
-       "XFeat: Accelerated Features for Lightweight Image Matching, CVPR 2024."
-    """
+#Simple inference with batch = 1
+for i in range(0,1000):
+	x = torch.randn(1,3,480,640)
+	start = time.perf_counter()
+	output_v1 = xfeat_v1.detectAndComputeDense(x, top_k = 4096)
+	end1 = time.perf_counter()
+	output_ori = xfeat_ori.detectAndComputeDense(x, top_k = 4096)
+	end2 = time.perf_counter()
+	gap_once = (end2 - end1) - (end1 - start)
+	print("NO:",i,"gap time:",gap_once)
+	gap += gap_once
 
-    def __init__(self):
-        super().__init__()
-        self.block = nn.Sequential(
-            BasicLayer(in_channels, out_channels, stride=2),
-			BasicLayer(in_channels, out_channels, stride=1),
-			BasicLayer(in_channels, out_channels, stride=1),
-        )
-    def forward(self, x):
-        return self.block(x)
-    
-class block4_ds(nn.Module):
-    """
-       Implementation of architecture described in 
-       "XFeat: Accelerated Features for Lightweight Image Matching, CVPR 2024."
-    """
+print("ori - v1 time:", gap)
+# print("----------------")
+# print("keypoints: ", output['keypoints'].shape)
+# print("descriptors: ", output['descriptors'].shape)
+# print("scores: ", output['scales'].shape)
+# print("----------------\n")
 
-    def __init__(self):
-        super().__init__()
-        self.block = nn.Sequential(
-            DepthwiseSeparableLayer(in_channels, out_channels, stride=2),
-			DepthwiseSeparableLayer(in_channels, out_channels, stride=1),
-			DepthwiseSeparableLayer(in_channels, out_channels, stride=1),
-        )
-    def forward(self, x):
-        return self.block(x)
+# x = torch.randn(1,3,480,640)
+# output = xfeat.detectAndComputeDense(x, top_k = 4096)
 
-def measure_time(module, runs=100):
-    """测量 module 在 input_tensor 上的平均前向推理时间 (ms)。"""
-    # 如果使用 GPU，需要在计时前后同步
-    if device.type == 'cuda':
-        torch.cuda.synchronize()
-    start = time.perf_counter()
-    with torch.no_grad():
-        for _ in range(runs):
-            x = torch.randn(1, in_channels, H, W, device=device)
-            _ = module(x)
-    if device.type == 'cuda':
-        torch.cuda.synchronize()
-    end = time.perf_counter()
-    return (end - start) / runs * 1000.0
+# # Stress test
+# for i in tqdm.tqdm(range(100), desc="Stress test on VGA resolution"):
+# 	output = xfeat.detectAndCompute(x, top_k = 4096)
 
-# 测试参数
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-batch_size  = 1
-in_channels = 256
-out_channels= 256
-H = 640 // 8
-W = 480 // 8
+# # Batched mode
+# x = torch.randn(4,3,480,640)
+# outputs = xfeat.detectAndCompute(x, top_k = 4096)
+# print("# detected features on each batch item:", [len(o['keypoints']) for o in outputs])
 
-if __name__ == '__main__':
-   
-    # basic = BasicLayer(in_channels, out_channels).to(device).eval()
-    # ds    = DepthwiseSeparableLayer(in_channels, out_channels).to(device).eval()
+# # Match two images with sparse features
+# x1 = torch.randn(1,3,480,640)
+# x2 = torch.randn(1,3,480,640)
+# mkpts_0, mkpts_1 = xfeat.match_xfeat(x1, x2)
 
-    basic = block4_ori().to(device).eval()
-    ds    = block4_ds().to(device).eval()
-
-    # 预热
-    with torch.no_grad():
-        for _ in range(10):
-            x = torch.randn(in_channels, in_channels, H, W, device=device)
-            _ = basic(x)
-            _ = ds(x)
-
-    # 测时
-    runs = 1000
-    t_basic = measure_time(basic, runs)
-    t_ds    = measure_time(ds,    runs)
-
-    # 输出结果
-    print(f"平均每次前向推理耗时（{runs} 次取平均）:")
-    print(f"  BasicLayer:                {t_basic:7.3f} ms")
-    print(f"  DepthwiseSeparableLayer:   {t_ds:7.3f} ms")
-
+# # Match two images with semi-dense approach -- batched mode with batch size 4
+# x1 = torch.randn(1,3,480,640)
+# x2 = torch.randn(1,3,480,640)
+# t1 = time.perf_counter()
+# matches_list = xfeat.match_xfeat_star(x1, x2)
+# t2 = time.perf_counter()
+# print("total time: ", t2-t1)
+# print(matches_list[0].shape)
