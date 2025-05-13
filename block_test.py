@@ -109,8 +109,8 @@ def measure_time(module, runs=100):
 # 测试参数
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 batch_size  = 1
-in_channels = 512
-out_channels= 512
+in_channels = 128
+out_channels= 128
 H = 640 // 8
 W = 480 // 8
 
@@ -119,23 +119,23 @@ if __name__ == '__main__':
     # basic = BasicLayer(in_channels, out_channels).to(device).eval()
     # ds    = DepthwiseSeparableLayer(in_channels, out_channels).to(device).eval()
 
-    basic = block4_ori().to(device).eval()
-    ds    = block4_sf().to(device).eval()
+    # basic = block4_ori().to(device).eval()
+    ds    = block4_ds().to(device).eval()
 
     # 预热
     with torch.no_grad():
         for _ in range(10):
             x = torch.randn(in_channels, in_channels, H, W, device=device)
-            _ = basic(x)
+            # _ = basic(x)
             _ = ds(x)
 
     # 测时
-    runs = 1000
-    t_basic = measure_time(basic, runs)
+    runs = 100
+    # t_basic = measure_time(basic, runs)
     t_ds    = measure_time(ds,    runs)
 
     # 输出结果
     print(f"平均每次前向推理耗时（{runs} 次取平均）:")
-    print(f"  BasicLayer:                {t_basic:7.3f} ms")
+    # print(f"  BasicLayer:                {t_basic:7.3f} ms")
     print(f"  DepthwiseSeparableLayer:   {t_ds:7.3f} ms")
 
